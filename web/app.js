@@ -237,6 +237,8 @@ function refreshDetail() {
   cur = it; const p = $('#detail'), y = p.scrollTop; p.innerHTML = detailHTML(it); p.scrollTop = y; renderCTA(it); bindSlider(it);
 }
 function closeDetail() { $('#detail').classList.remove('on'); $('#cta').classList.remove('on'); cur = null; }
+/** The listing itself when we have its link; otherwise Daangn's own search for the exact title (alerts carry no link). */
+const daangnLink = it => it.url || 'https://www.daangn.com/kr/search/buy-sell/?q=' + encodeURIComponent(it.title);
 function detailHTML(it) {
   const c = calc(it), ok = c.n >= 2 && c.has, cs = compsOf(it.id).sort((a, b) => new Date(b.date) - new Date(a.date));
   const reason = !c.has ? '키워드 알림에는 가격이 오지 않아요. 당근에서 가격을 확인하고 넣으면 바로 계산해요.' : {
@@ -254,12 +256,12 @@ function detailHTML(it) {
     <div class="d-meta" style="margin-top:16px">${esc(it.source || '직접 등록')} · ${esc(it.place || '동네 미입력')} · ${rel(it.createdAt)}</div>
     <div style="font-size:18px;font-weight:700;margin-top:4px;letter-spacing:-.02em">${esc(it.title)}</div>
     <div style="color:var(--ink3);font-size:14px;margin-top:2px">${esc(it.cond || '')}</div>
-    ${it.url ? `<a class="ghost-btn" href="${esc(it.url)}" target="_blank" rel="noopener">원본 매물 보기 ›</a>` : ''}
+    <a class="ghost-btn" href="${esc(daangnLink(it))}" target="_blank" rel="noopener">${it.url ? '원본 매물 보기 ›' : '당근에서 이 매물 찾기 ›'}</a>
 
     <div class="verdict"><span class="pill ${c.v.k}">${c.v.l}</span>
       <h2>${!c.has ? '가격을 넣어주세요' : c.v.k === 'unk' ? '시세를 먼저 확인하세요' : c.net >= 0 ? `사면 <span style="color:var(--${col})">${won(c.net)}</span> 남아요` : `사면 ${won(-c.net)} 손해예요`}</h2>
       <p>${reason}</p>
-      ${!c.has ? `<div class="btn-stack" style="margin-top:14px"><button class="btn pri full" data-act="set-price">가격 입력</button>${it.url ? '' : '<button class="btn sec full" data-act="copy-title">상품명 복사 (당근에서 검색용)</button>'}</div>` : ''}</div>
+      ${!c.has ? `<div class="btn-stack" style="margin-top:14px"><a class="btn pri full" href="${esc(daangnLink(it))}" target="_blank" rel="noopener">당근에서 가격 보기</a><button class="btn sec full" data-act="set-price">가격 입력</button></div>` : ''}</div>
 
     ${ok ? `<div class="card"><h3>얼마까지 사도 될까 <small>매입가를 움직여 보세요</small></h3>
       <div class="slider-val num" id="sv"></div><div class="slider-cap" id="sc"></div>

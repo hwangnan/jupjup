@@ -1,5 +1,5 @@
 /* 줍줍 service worker: app shell offline, API calls always go to the network. */
-const CACHE = 'jupjup-v3';
+const CACHE = 'jupjup-v4';
 const SHELL = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
