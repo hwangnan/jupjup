@@ -495,7 +495,7 @@ function renderMe() {
     ${COSTS.map(([k, l, u]) => `<button class="row" data-act="edit-cost" data-k="${k}"><span>${l}</span><b class="num">${u === '원' ? won(s[k]) : s[k] + u}</b></button>`).join('')}</div>
   <div class="card"><h3>연결</h3>
     <button class="conn" data-act="conn-sheets"><span class="oi">${svg(IC.sheet)}</span><div><b>Google Sheets</b><small>${conn ? '매물·거래 기록을 저장하고 있어요' : '연결하면 실제 기록으로 바뀌어요'}</small></div><span class="status${conn ? ' ok' : ''}">${conn ? '연결됨' : '연결하기'}</span></button>
-    <div class="conn"><span class="oi">${svg(IC.phone)}</span><div><b>MacroDroid 알림 수집</b><small>당근 알림을 앱으로 전달</small></div><span class="status">다음 단계</span></div>
+    <button class="conn" data-act="macro"><span class="oi">${svg(IC.phone)}</span><div><b>MacroDroid 알림 수집</b><small>${s.lastIngestAt ? '마지막 수신 ' + rel(s.lastIngestAt) : '당근 알림을 앱으로 전달'}</small></div><span class="status${s.lastIngestAt ? ' ok' : ''}">${s.lastIngestAt ? '수신 중' : '설정하기'}</span></button>
     <div class="conn"><span class="oi">${svg(IC.spark)}</span><div><b>AI 매물 분석</b><small>사진·제목에서 상품 식별</small></div><span class="status">다음 단계</span></div></div>
   ${live() ? '' : '<p class="note">지금은 예시 데이터를 보여주고 있어요. Google Sheets를 연결하면 실제 기록으로 바뀌어요.</p>'}`;
   const tg = $('#target');
@@ -538,6 +538,20 @@ function disconnect() {
   store.del('jj-conn'); store.del('jj-cache'); setMode('demo');
   Object.assign(S, demoData()); S.set = { ...DEFAULT_SET }; S.syncedAt = 0;
   closeSheet(); renderAll(); renderMe(); toast('예시 데이터로 바꿨어요');
+}
+function macroSheet() {
+  const c = API.cfg();
+  if (!c) return toast('먼저 Google Sheets를 연결해 주세요');
+  const rows = [['action', 'ingest'], ['token', c.token], ['title', '[notification_title]'], ['text', '[notification]'], ['app', '[app_name]']];
+  sheet(`<h3>MacroDroid 설정</h3><p class="sub">당근 알림이 오면 MacroDroid가 아래 주소로 보내요. 값 옆 복사를 눌러 그대로 붙여넣으세요.</p>
+    <div class="card" style="margin-top:0;background:var(--mute-soft)">
+      <div class="row"><span>방식</span><b>POST</b></div>
+      <div class="row" style="align-items:flex-start"><span>주소</span><button class="ghost-btn" style="margin:0;padding:0" data-act="copy-text" data-copy="${esc(c.url)}">주소 복사</button></div>
+    </div>
+    <p class="note">쿼리 매개변수(Query parameters)에 아래 5개를 추가해요. 대괄호 값은 직접 치지 말고 MacroDroid의 <b>…(매직 텍스트)</b> 버튼에서 알림 제목·알림 텍스트·앱 이름을 골라 넣어요.</p>
+    ${rows.map(([k, v]) => `<div class="row"><span class="num">${k}</span><button class="ghost-btn" style="margin:0;padding:0" data-act="copy-text" data-copy="${esc(v)}">${k === 'token' ? '토큰 복사' : esc(v)}</button></div>`).join('')}
+    <div class="warnbox" style="margin-top:12px">토큰이 들어 있으니 이 매크로는 다른 사람에게 공유하지 마세요.</div>
+    <div style="height:14px"></div><button class="btn sec full" data-act="close-sheet">닫기</button>`);
 }
 function setMode(m) { S.mode = m; document.body.classList.toggle('live', m === 'live'); $('#refresh-btn').hidden = m !== 'live'; }
 
@@ -627,6 +641,8 @@ const ACTIONS = {
   'del-kw': b => { const k = (S.set.keywords || []).slice(); k.splice(+b.dataset.i, 1); saveSettings({ keywords: k }); renderMe(); },
   'conn-sheets': connSheet, 'do-conn': b => doConnect(b), 'do-disconn': disconnect,
   toast: b => toast(b.dataset.msg),
+  macro: macroSheet,
+  'copy-text': b => { const t = b.dataset.copy; if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => toast('복사했어요'), () => toast('복사 못 했어요. 길게 눌러 직접 복사하세요')); else toast(t); },
   copy: () => {
     const n = $('#nego'), t = n.textContent;
     const sel = () => { const r = document.createRange(); r.selectNodeContents(n); getSelection().removeAllRanges(); getSelection().addRange(r); toast('메시지를 선택했어요. 길게 눌러 복사하세요'); };

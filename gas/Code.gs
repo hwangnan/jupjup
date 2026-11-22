@@ -9,7 +9,8 @@ const SCHEMA = {
     'buyPrice', 'askPrice', 'retail', 'listPrice', 'soldPrice', 'boughtAt', 'listedAt', 'soldAt', 'imageId', 'memo'],
   Comps: ['id', 'itemId', 'price', 'source', 'date', 'cond', 'createdAt'],
   Settings: ['key', 'value'],
-  Log: ['at', 'itemId', 'from', 'to']
+  Log: ['at', 'itemId', 'from', 'to'],
+  Inbox: ['at', 'app', 'title', 'text', 'keyword', 'price', 'result', 'itemId', 'key']
 };
 const NUM_COLS = ['buyPrice', 'askPrice', 'retail', 'listPrice', 'soldPrice', 'price'];
 const DATE_COLS = ['createdAt', 'updatedAt', 'boughtAt', 'listedAt', 'soldAt', 'date', 'at'];
@@ -48,7 +49,7 @@ function doGet() { return json_({ ok: true, app: 'jupjup', version: 1 }); }
 
 function doPost(e) {
   try {
-    const req = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const req = parseReq_(e);
     const token = props_().getProperty('API_TOKEN');
     if (!token || req.token !== token) return json_({ ok: false, error: '토큰이 맞지 않아요' });
     const fn = ACTIONS[req.action];
@@ -133,6 +134,29 @@ const ACTIONS = {
     return { saved: Object.keys(s) };
   },
 
+  /** MacroDroid: one Daangn keyword notification → filtered, de-duplicated, saved as a new item. */
+  ingest(req) {
+    const title = String(req.title || '').trim(), text = String(req.text || '').trim();
+    if (!title && !text) throw new Error('알림 내용이 비어 있어요');
+    const p = parseAlert_(title, text, settings_().keywords || []);
+    const key = (p.title + '|' + p.price).replace(/\s+/g, '').toLowerCase();
+    const inbox = ensureSheet_('Inbox');
+    let result = 'created', itemId = '';
+    if (!p.price) result = 'noprice';
+    else if (isDup_(inbox, key)) result = 'duplicate';
+    else if (p.max && p.price > p.max) result = 'over-max';
+    else {
+      itemId = ACTIONS.createItem({ item: {
+        title: p.title, category: p.category, buyPrice: p.price, askPrice: p.price, place: p.place,
+        source: '키워드 알림', status: 'new', memo: (title + ' / ' + text).slice(0, 500)
+      } }).id;
+    }
+    inbox.appendRow([new Date(), safe_(String(req.app || '').slice(0, 50)), safe_(title.slice(0, 300)), safe_(text.slice(0, 1000)),
+      safe_(p.keyword), p.price || '', result, itemId, key]);
+    ACTIONS.saveSettings({ settings: { lastIngestAt: new Date().toISOString() } });
+    return { result: result, itemId: itemId, parsed: p };
+  },
+
   uploadImage(req) {
     const m = /^data:(image\/[\w.+-]+);base64,(.+)$/.exec(req.dataUrl || '');
     if (!m) throw new Error('이미지 형식이 아니에요');
@@ -193,9 +217,86 @@ function toRow_(name, o) {
     if (v === null || v === undefined || v === '') return '';
     if (DATE_COLS.indexOf(c) >= 0) return new Date(v);
     if (NUM_COLS.indexOf(c) >= 0) return Number(v) || 0;
-    const s = String(v);
-    return /^[=+\-@]/.test(s) ? "'" + s : s; // never let user text become a formula
+    return safe_(String(v));
   });
+}
+/** Never let user text become a formula. */
+function safe_(s) { s = String(s == null ? '' : s); return /^[=+\-@]/.test(s) ? "'" + s : s; }
+function parseReq_(e) {
+  const raw = (e && e.postData && e.postData.contents) || '';
+  if (raw && raw.trim().charAt(0) === '{') { try { return JSON.parse(raw); } catch (x) { /* fall through to form fields */ } }
+  return Object.assign({}, (e && e.parameter) || {});
+}
+function settings_() {
+  const s = {};
+  rows_('Settings').forEach(r => { try { s[r.key] = JSON.parse(r.value); } catch (e) { s[r.key] = r.value; } });
+  return s;
+}
+function ensureSheet_(name) {
+  const ss = ss_();
+  let sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, SCHEMA[name].length).setValues([SCHEMA[name]]).setFontWeight('bold').setBackground('#E2F7F0');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+function isDup_(sh, key) {
+  const last = sh.getLastRow(); if (last < 2) return false;
+  const n = Math.min(300, last - 1), since = Date.now() - 48 * 3600 * 1000;
+  return sh.getRange(last - n + 1, 1, n, 9).getValues()
+    .some(r => r[8] === key && r[6] === 'created' && new Date(r[0]).getTime() > since);
+}
+
+/* ---------- Daangn alert parsing ---------- */
+const PRICE_RE = /(\d{1,3}(?:,\d{3})+|\d+)\s*원/;
+const MAN_RE = /(\d+(?:\.\d+)?)\s*만\s*원?/;
+const BOILER_RE = /키워드|알림|새\s*(글|게시글|매물|상품)|올라왔|등록(됐|되었)|당근|확인해\s*보세요/;
+function parseAlert_(title, text, keywords) {
+  const all = title + '\n' + text;
+  let price = 0, m = all.match(PRICE_RE);
+  if (m) price = Number(m[1].replace(/,/g, ''));
+  else if ((m = all.match(MAN_RE))) price = Math.round(Number(m[1]) * 10000);
+
+  let kw = null;
+  const lower = all.toLowerCase();
+  (keywords || []).forEach(k => {
+    if (k && k.kw && lower.indexOf(String(k.kw).toLowerCase()) >= 0 && (!kw || String(k.kw).length > String(kw.kw).length)) kw = k;
+  });
+  if (!kw) { const q = all.match(/['‘“"「]([^'’”"」]{1,30})['’”"」]/); if (q) kw = { kw: q[1], max: null }; }
+
+  let place = '';
+  const cand = [];
+  all.split(/\n|·|\||•|ㆍ/).map(s => s.trim()).filter(Boolean).forEach(s => {
+    if (/^[가-힣0-9]{1,10}(동|읍|면|리|가)$/.test(s)) { place = s; return; }
+    let t = s.replace(new RegExp(PRICE_RE.source, 'g'), '').replace(new RegExp(MAN_RE.source, 'g'), '').trim();
+    if (BOILER_RE.test(t) && t.length < 40) return;
+    t = t.replace(/^[\[(][^\])]*[\])]\s*/, '').replace(/[,·\s]+$/, '').trim();
+    if (t.length >= 2) cand.push(t);
+  });
+  const name = cand.sort((a, b) => b.length - a.length)[0] || (text || title).slice(0, 60);
+  return {
+    title: name.slice(0, 100), price: price, place: place,
+    keyword: kw ? String(kw.kw) : '', max: kw && kw.max ? Number(kw.max) : 0,
+    category: guessCategory_(name + ' ' + (kw ? kw.kw : ''))
+  };
+}
+function guessCategory_(s) {
+  if (/케이스|아이폰|갤럭시|에어팟|버즈|폰\s?스트랩|그립톡/.test(s)) return '폰케이스';
+  if (/가방|백팩|숄더백|크로스백|토트|지갑|비니|모자|볼캡|벨트|머플러|목도리|시계|선글라스|파우치|키링|카드지갑/.test(s)) return '패션잡화';
+  if (/텀블러|머그|컵|램프|조명|쿠션|담요|그릇|접시|캔들|디퓨저|보틀/.test(s)) return '생활용품';
+  return '의류';
+}
+
+/** 편집기에서 실행: 알림 문구가 어떻게 읽히는지 확인만 해요 (시트에 쓰지 않음). */
+function testParse() {
+  const samples = [
+    ["'케이스티파이' 키워드 알림", '케이스티파이 아이폰15 프로 미러 케이스\n15,000원 · 합정동'],
+    ['키워드 알림', '[폴로 니트] 폴로 랄프로렌 케이블 니트 L 네이비 2.8만원']
+  ];
+  const kws = settings_().keywords || [];
+  samples.forEach(s => Logger.log(JSON.stringify(parseAlert_(s[0], s[1], kws))));
 }
 function toObj_(name, row) {
   const o = {};
