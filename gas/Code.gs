@@ -142,12 +142,12 @@ const ACTIONS = {
     const key = (p.title + '|' + p.price).replace(/\s+/g, '').toLowerCase();
     const inbox = ensureSheet_('Inbox');
     let result = 'created', itemId = '';
-    if (!p.price) result = 'noprice';
-    else if (isDup_(inbox, key)) result = 'duplicate';
+    // Daangn keyword alerts carry no price: those items are saved with an empty price for the user to fill in.
+    if (isDup_(inbox, key)) result = 'duplicate';
     else if (p.max && p.price > p.max) result = 'over-max';
     else {
       itemId = ACTIONS.createItem({ item: {
-        title: p.title, category: p.category, buyPrice: p.price, askPrice: p.price, place: p.place,
+        title: p.title, category: p.category, buyPrice: p.price || null, askPrice: p.price || null, place: p.place,
         source: '키워드 알림', status: 'new', memo: (title + ' / ' + text).slice(0, 500)
       } }).id;
     }
@@ -254,6 +254,21 @@ const PRICE_RE = /(\d{1,3}(?:,\d{3})+|\d+)\s*원/;
 const MAN_RE = /(\d+(?:\.\d+)?)\s*만\s*원?/;
 const BOILER_RE = /키워드|알림|새\s*(글|게시글|매물|상품)|올라왔|등록(됐|되었)|당근|확인해\s*보세요/;
 function parseAlert_(title, text, keywords) {
+  // Real Daangn format (2026-11): title "새 상품, 새상품 - 구로구 구로동 · …", text = listing title, no price.
+  const hd = /^(.+?)\s+-\s+(.+)$/.exec(title);
+  if (hd && text) {
+    const kws = hd[1].split(',').map(s => s.trim()).filter(Boolean);
+    const loc = hd[2].split('·')[0].replace(/…|\.\.\./g, '').trim().split(/\s+/);
+    const name = text.replace(/\s+/g, ' ').trim();
+    const pm = name.match(PRICE_RE);
+    const known = (keywords || []).filter(k => k && k.kw && kws.some(w => w.replace(/\s/g, '') === String(k.kw).replace(/\s/g, '')));
+    const kw = known.sort((a, b) => (Number(b.max) || 0) - (Number(a.max) || 0))[0];
+    return {
+      title: name.slice(0, 100), price: pm ? Number(pm[1].replace(/,/g, '')) : 0,
+      place: loc[loc.length - 1] || '', keyword: kws.join(', '), max: kw && kw.max ? Number(kw.max) : 0,
+      category: guessCategory_(name)
+    };
+  }
   const all = title + '\n' + text;
   let price = 0, m = all.match(PRICE_RE);
   if (m) price = Number(m[1].replace(/,/g, ''));
@@ -284,14 +299,15 @@ function parseAlert_(title, text, keywords) {
 }
 function guessCategory_(s) {
   if (/케이스|아이폰|갤럭시|에어팟|버즈|폰\s?스트랩|그립톡/.test(s)) return '폰케이스';
-  if (/가방|백팩|숄더백|크로스백|토트|지갑|비니|모자|볼캡|벨트|머플러|목도리|시계|선글라스|파우치|키링|카드지갑/.test(s)) return '패션잡화';
-  if (/텀블러|머그|컵|램프|조명|쿠션|담요|그릇|접시|캔들|디퓨저|보틀/.test(s)) return '생활용품';
+  if (/가방|백팩|숄더백|크로스백|토트|지갑|비니|모자|볼캡|벨트|머플러|목도리|시계|선글라스|파우치|키링|카드지갑|스트랩|머리띠|헤어핀|귀걸이|목걸이|반지/.test(s)) return '패션잡화';
+  if (/텀블러|머그|컵|램프|조명|쿠션|담요|그릇|접시|캔들|디퓨저|보틀|인형|피규어|굿즈|향수/.test(s)) return '생활용품';
   return '의류';
 }
 
 /** 편집기에서 실행: 알림 문구가 어떻게 읽히는지 확인만 해요 (시트에 쓰지 않음). */
 function testParse() {
   const samples = [
+    ['새 상품, 새상품 - 구로구 구로동 · 바로…', '새상품)날씬이 벨티드 숏패딩 블랙/아이'],
     ["'케이스티파이' 키워드 알림", '케이스티파이 아이폰15 프로 미러 케이스\n15,000원 · 합정동'],
     ['키워드 알림', '[폴로 니트] 폴로 랄프로렌 케이블 니트 L 네이비 2.8만원']
   ];

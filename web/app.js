@@ -63,14 +63,15 @@ const compsOf = id => S.comps.filter(c => c.itemId === id);
 const costOf = sell => S.set.move + S.set.clean + sell * S.set.feePct / 100;
 const soldNet = it => it.soldPrice - it.buyPrice - costOf(it.soldPrice);
 function calc(it, buy = it.buyPrice) {
-  const cs = compsOf(it.id).map(c => c.price), n = cs.length, sell = med(cs), cost = costOf(sell), net = sell - buy - cost;
+  const cs = compsOf(it.id).map(c => c.price), n = cs.length, sell = med(cs), cost = costOf(sell), has = buy > 0, net = has ? sell - buy - cost : 0;
   const maxBuy = Math.floor((sell - cost - S.set.target) / 1000) * 1000;
   let v;
-  if (n < 2) v = { k: 'unk', l: '시세 확인 필요' };
+  if (!has) v = { k: 'unk', l: '가격 입력 필요' };
+  else if (n < 2) v = { k: 'unk', l: '시세 확인 필요' };
   else if (net >= S.set.target) v = { k: 'good', l: '사세요' };
   else if (net >= S.set.target * .5) v = { k: 'mid', l: '네고하면 OK' };
   else v = { k: 'bad', l: '패스 추천' };
-  return { n, sell, cost, net, maxBuy, rate: buy ? net / buy : 0, hour: net / (S.set.minutes / 60), v, conf: Math.min(n, 3) };
+  return { n, sell, cost, net, maxBuy, has, rate: has ? net / buy : 0, hour: net / (S.set.minutes / 60), v, conf: Math.min(n, 3) };
 }
 const expectedNet = it => it.status === 'selling' && it.listPrice ? it.listPrice - it.buyPrice - costOf(it.listPrice) : compsOf(it.id).length ? calc(it).net : 0;
 const imgSrc = it => it.img || (it.imageId ? `https://drive.google.com/thumbnail?id=${encodeURIComponent(it.imageId)}&sz=w800` : '');
@@ -180,7 +181,7 @@ function setStatus(id, st, extra = {}) {
 /* ---------- HOME ---------- */
 function renderHome() {
   const list = S.items.filter(i => i.status === 'new' && (S.filter === '전체' || i.category === S.filter)).map(i => ({ i, c: calc(i) }))
-    .sort((a, b) => (b.c.n >= 2) - (a.c.n >= 2) || b.c.net - a.c.net || new Date(b.i.createdAt) - new Date(a.i.createdAt));
+    .sort((a, b) => (b.c.v.k !== 'unk') - (a.c.v.k !== 'unk') || b.c.net - a.c.net || new Date(b.i.createdAt) - new Date(a.i.createdAt));
   const fresh = S.items.filter(i => i.status === 'new'), good = fresh.filter(i => calc(i).v.k === 'good').length;
   $('#home-title').innerHTML = good ? `오늘 살 만한 매물<br><em>${good}개</em>를 찾았어요` : fresh.length ? `새 매물 ${fresh.length}개를<br>살펴보세요` : '새 후보를<br>기다리는 중이에요';
   $('#home-sub').textContent = live() ? `직접 등록하거나 알림으로 들어온 매물이에요${S.syncedAt ? ' · ' + rel(S.syncedAt) + ' 동기화' : ''}` : '당근 키워드 알림으로 들어온 매물을 시세와 비교했어요';
@@ -192,9 +193,9 @@ function renderHome() {
     <div class="d-body">
       <div class="d-meta">${(Date.now() - new Date(i.createdAt)) < 36e5 ? '<span class="live"></span>' : ''}${esc(i.source || '직접 등록')}${i.place ? ' · ' + esc(i.place) : ''} · ${rel(i.createdAt)}</div>
       <div class="d-title">${esc(i.title)}</div>
-      <div class="d-price num"><b>${won(i.buyPrice)}</b>${c.n ? ` → 시세 ${man(c.sell)}` : ''}</div>
+      <div class="d-price num"><b>${c.has ? won(i.buyPrice) : '가격 미확인'}</b>${c.n ? ` → 시세 ${man(c.sell)}` : ''}</div>
       <div class="d-foot">
-        <span class="profit num ${c.v.k === 'unk' ? 'unk' : c.net < 0 ? 'neg' : c.v.k === 'mid' ? 'mid' : ''}">${c.v.k === 'unk' ? '시세 근거 부족' : (c.net >= 0 ? '+' : '') + won(c.net)}</span>
+        <span class="profit num ${c.v.k === 'unk' ? 'unk' : c.net < 0 ? 'neg' : c.v.k === 'mid' ? 'mid' : ''}">${!c.has ? '눌러서 가격 넣기' : c.v.k === 'unk' ? '시세 근거 부족' : (c.net >= 0 ? '+' : '') + won(c.net)}</span>
         <span class="pill ${c.v.k}">${c.v.l}</span>
       </div>
     </div></div></div>`).join('')
@@ -237,8 +238,8 @@ function refreshDetail() {
 }
 function closeDetail() { $('#detail').classList.remove('on'); $('#cta').classList.remove('on'); cur = null; }
 function detailHTML(it) {
-  const c = calc(it), ok = c.n >= 2, cs = compsOf(it.id).sort((a, b) => new Date(b.date) - new Date(a.date));
-  const reason = {
+  const c = calc(it), ok = c.n >= 2 && c.has, cs = compsOf(it.id).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const reason = !c.has ? '키워드 알림에는 가격이 오지 않아요. 당근에서 가격을 확인하고 넣으면 바로 계산해요.' : {
     good: `시세보다 ${won(c.sell - it.buyPrice)} 싸게 올라왔어요. 비용을 빼도 ${won(c.net)}이 남아요.`,
     mid: `남긴 하지만 기준(${won(S.set.target)})보다 적어요. ${won(Math.max(c.maxBuy, 0))}까지 깎으면 기준을 넘어요.`,
     bad: '시세와 차이가 작아서 비용을 빼면 거의 남지 않아요.',
@@ -256,8 +257,9 @@ function detailHTML(it) {
     ${it.url ? `<a class="ghost-btn" href="${esc(it.url)}" target="_blank" rel="noopener">원본 매물 보기 ›</a>` : ''}
 
     <div class="verdict"><span class="pill ${c.v.k}">${c.v.l}</span>
-      <h2>${c.v.k === 'unk' ? '시세를 먼저 확인하세요' : c.net >= 0 ? `사면 <span style="color:var(--${col})">${won(c.net)}</span> 남아요` : `사면 ${won(-c.net)} 손해예요`}</h2>
-      <p>${reason}</p></div>
+      <h2>${!c.has ? '가격을 넣어주세요' : c.v.k === 'unk' ? '시세를 먼저 확인하세요' : c.net >= 0 ? `사면 <span style="color:var(--${col})">${won(c.net)}</span> 남아요` : `사면 ${won(-c.net)} 손해예요`}</h2>
+      <p>${reason}</p>
+      ${!c.has ? `<div class="btn-stack" style="margin-top:14px"><button class="btn pri full" data-act="set-price">가격 입력</button>${it.url ? '' : '<button class="btn sec full" data-act="copy-title">상품명 복사 (당근에서 검색용)</button>'}</div>` : ''}</div>
 
     ${ok ? `<div class="card"><h3>얼마까지 사도 될까 <small>매입가를 움직여 보세요</small></h3>
       <div class="slider-val num" id="sv"></div><div class="slider-cap" id="sc"></div>
@@ -276,10 +278,10 @@ function detailHTML(it) {
       ${[['사진상 택·로고 위치가 정품과 같아요', 1], ['오염·보풀은 사진만으로 확인이 어려워요', 0], ['판매자에게 실측 사이즈를 물어보세요', 0]].map(([t, g]) => `<div class="check">${svg(g ? IC.check : '<path d="M12 8v5M12 17h.01"/><circle cx="12" cy="12" r="10"/>', 2.4, `style="color:var(--${g ? 'brand' : 'warn'})"`)}${t}</div>`).join('')}
       <div class="note" style="margin-bottom:0">AI 분석 연결 전이라 예시 문구예요.</div></div>`}
 
-    <div class="card"><h3>네고 메시지</h3>
+    ${c.has ? `<div class="card"><h3>네고 메시지</h3>
       <div class="msg" id="nego">안녕하세요! ${esc(it.title)} 아직 판매 중인가요? 혹시 ${won(offer)}에 가능하시면 오늘 바로 받으러 갈게요.</div>
       <button class="ghost-btn" data-act="copy">메시지 복사</button>
-    </div>
+    </div>` : ''}
   </div>`;
 }
 function bindSlider(it) {
@@ -391,7 +393,7 @@ function renderInv() {
   if (S.invTab === 'sold') L = L.sort((a, b) => new Date(b.soldAt) - new Date(a.soldAt));
   $('#inv-list').innerHTML = L.length ? `<div class="inv">${L.map(i => {
     const c = calc(i); let right = '', sub = '';
-    if (i.status === 'watch') { sub = `${won(i.buyPrice)}${i.place ? ' · ' + esc(i.place) : ''}`; right = c.n >= 2 ? `<span class="profit num" style="font-size:15px">${c.net >= 0 ? '+' : ''}${won(c.net)}</span><span class="pill ${c.v.k}" style="font-size:11px">${c.v.l}</span>` : `<span class="pill unk" style="font-size:11px">시세 확인 필요</span>`; }
+    if (i.status === 'watch') { sub = `${c.has ? won(i.buyPrice) : '가격 미확인'}${i.place ? ' · ' + esc(i.place) : ''}`; right = c.v.k !== 'unk' ? `<span class="profit num" style="font-size:15px">${c.net >= 0 ? '+' : ''}${won(c.net)}</span><span class="pill ${c.v.k}" style="font-size:11px">${c.v.l}</span>` : `<span class="pill unk" style="font-size:11px">${c.v.l}</span>`; }
     if (i.status === 'bought') { const d = daysSince(i.boughtAt); sub = `매입 ${won(i.buyPrice)}`; right = `<span class="age${d >= 7 ? ' old' : ''}">${d}일째</span>${c.n ? `<span style="font-size:13px;color:var(--ink3)">시세 ${man(c.sell)}</span>` : ''}`; }
     if (i.status === 'selling') { const d = daysSince(i.listedAt); sub = `매입 ${won(i.buyPrice)} → 판매가 ${won(i.listPrice)}`; right = `<span class="age${d >= 14 ? ' old' : ''}">${d}일째</span>${d >= 14 ? '<span style="font-size:12px;color:var(--bad);font-weight:600">가격 내려보세요</span>' : ''}`; }
     if (i.status === 'sold') { const n = soldNet(i); sub = `${won(i.buyPrice)} → ${won(i.soldPrice)} · ${daysBetween(i.boughtAt || i.createdAt, i.soldAt)}일 만에`; right = `<span class="profit num ${n < 0 ? 'neg' : ''}" style="font-size:16px">${n >= 0 ? '+' : ''}${won(n)}</span>`; }
@@ -401,7 +403,7 @@ function renderInv() {
 }
 function rowSheet(id) {
   const it = find(id); if (!it) return; const c = calc(it), dt = `<button class="btn sec full" data-act="detail" data-id="${esc(id)}">자세히 보기</button>`;
-  if (it.status === 'watch') return sheet(`<h3>${esc(it.title)}</h3><p class="sub">${won(it.buyPrice)}${c.n >= 2 ? ` · 예상 순이익 ${won(c.net)}` : ''}</p>
+  if (it.status === 'watch') return sheet(`<h3>${esc(it.title)}</h3><p class="sub">${c.has ? won(it.buyPrice) : '가격 미확인'}${c.v.k !== 'unk' ? ` · 예상 순이익 ${won(c.net)}` : ''}</p>
     <div class="btn-stack"><button class="btn pri full" data-act="buy" data-id="${esc(id)}">샀어요</button>${dt}<button class="btn sec full" data-act="unwatch" data-id="${esc(id)}">관심 빼기</button></div>`);
   if (it.status === 'bought') return sheet(`<h3>판매 등록했나요?</h3><p class="sub">올린 가격을 넣으면 판매중으로 옮길게요.${c.n ? ` 시세 중앙값은 ${won(c.sell)}이에요.` : ''}</p>
     <label class="field"><span>판매 등록가</span><input id="f-list" inputmode="numeric" value="${c.n ? (Math.round(c.sell * 1.08 / 1000) * 1000).toLocaleString('ko-KR') : ''}"></label>
@@ -615,9 +617,12 @@ const ACTIONS = {
   row: b => rowSheet(b.dataset.id),
   buy: b => {
     const it = find(b.dataset.id || cur.id);
-    sheet(`<h3>얼마에 샀나요?</h3><p class="sub">네고했다면 실제 금액으로 바꿔주세요</p><label class="field"><span>실제 매입가</span><input id="f-buy2" inputmode="numeric" value="${it.buyPrice.toLocaleString('ko-KR')}"></label><button class="btn pri full" data-act="do-buy" data-id="${esc(it.id)}">매입 완료</button>`);
+    sheet(`<h3>얼마에 샀나요?</h3><p class="sub">네고했다면 실제 금액으로 바꿔주세요</p><label class="field"><span>실제 매입가</span><input id="f-buy2" inputmode="numeric" value="${it.buyPrice ? it.buyPrice.toLocaleString('ko-KR') : ''}"></label><button class="btn pri full" data-act="do-buy" data-id="${esc(it.id)}">매입 완료</button>`);
   },
-  'do-buy': b => { const id = b.dataset.id, v = num($('#f-buy2').value) || find(id).buyPrice; closeSheet(); if (cur) closeDetail(); setStatus(id, 'bought', { buyPrice: v }); S.invTab = 'bought'; switchTab('inv'); },
+  'set-price': () => sheet(`<h3>올라온 가격</h3><p class="sub">당근에서 확인한 판매 가격을 넣어주세요</p><label class="field"><span>가격</span><input id="f-price" inputmode="numeric" placeholder="25,000"></label><button class="btn pri full" data-act="save-price">계산하기</button>`),
+  'save-price': () => { const v = num($('#f-price').value); if (!v) return toast('가격을 적어주세요'); closeSheet(); updateItem(cur.id, { buyPrice: v, askPrice: cur.askPrice || v }).then(ok => { if (ok) { refreshDetail(); toast('가격을 넣었어요'); } }); },
+  'copy-title': () => ACTIONS['copy-text']({ dataset: { copy: cur.title } }),
+  'do-buy': b => { const id = b.dataset.id, v = num($('#f-buy2').value); if (!v) return toast('매입가를 적어주세요'); closeSheet(); if (cur) closeDetail(); setStatus(id, 'bought', { buyPrice: v }); S.invTab = 'bought'; switchTab('inv'); },
   'do-list': b => { const v = num($('#f-list').value); if (!v) return toast('판매 등록가를 적어주세요'); closeSheet(); S.invTab = 'selling'; setStatus(b.dataset.id, 'selling', { listPrice: v }); },
   'do-sold': b => { const v = num($('#f-sold').value); if (!v) return toast('판 가격을 적어주세요'); closeSheet(); S.invTab = 'sold'; setStatus(b.dataset.id, 'sold', { soldPrice: v }); },
   'do-drop': b => { const it = find(b.dataset.id), v = Math.round(it.listPrice * .9 / 1000) * 1000; closeSheet(); updateItem(it.id, { listPrice: v }).then(ok => ok && toast(`판매가를 ${won(v)}으로 내렸어요`)); },
